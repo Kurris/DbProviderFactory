@@ -1,2 +1,2 @@
 # DbProviderFactory
-Using .Net DbProviderFactory compatible most of database ，and implement a easy and simple ORM
+使用DbProviderFactory实现多个数据库兼容,并且可以使用实体ORM的方式进行数据查询!
