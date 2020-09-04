@@ -1,4 +1,5 @@
-﻿using HRRobot.Base.Ado;
+﻿using DbProviderFactory.Ado;
+using DbProviderFactory.ClassExtention;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -6,15 +7,7 @@ using System.Data.Common;
 using System.Linq;
 using System.Reflection;
 
-/*修改时间                               修改人                                 修改内容
- *20200413                              ligy                                  create 自定义ORM
- *20200429                              ligy                                  增加获取list实体,和datatable的方法
- *20200429                              wjm                                   增加根据datatable更新数据库和datarow转实体
- *20200429                              ligy                                  删除RowtoT方法,改为使用原有的方法逻辑
- *20200506                              ligy                                  修改Save方法,将以往DataRow转entity的方法改为直接取DataRow的数据
- ***************************************************************************************************************/
-
-namespace HRRobot.Base.ORM
+namespace DbProviderFactory.ORM
 {
     /// <summary>
     /// 使用泛型类对不同类型产生对应的类型副本
@@ -30,44 +23,22 @@ namespace HRRobot.Base.ORM
         }
 
         /// <summary>
-        /// 静态构造函数,只初始化一次
+        /// 静态构造函数
         /// </summary>
         static ORM()
         {
-            GeneralSql gen = new GeneralSql();
+            GenerateSql<T> Generate = new GenerateSql<T>();
 
-            _querySql = gen.QuerySql<T>();
-            _insertSql = gen.InsertSql<T>();
-            _deleteSql = gen.DeleteSql<T>();
-            _updateSql = gen.UpdateSql<T>();
+            _SelectSql = Generate.SelectSql();
+            _InsertSql = Generate.InsertSql();
+            _DeleteSql = Generate.DeleteSql();
+            _UpdateSql = Generate.UpdateSql();
         }
 
-        private static readonly string _querySql = string.Empty;
-        private static readonly string _insertSql = string.Empty;
-        private static readonly string _deleteSql = string.Empty;
-        private static readonly string _updateSql = string.Empty;
-
-        /// <summary>
-        /// 根据Id查询
-        /// </summary>
-        /// <param name="Id">Id</param>
-        /// <returns>实体</returns>
-        public static T FindById(int Id) => Find().FieldEqual("id", Id).GetEntity();
-
-        /// <summary>
-        /// 查询
-        /// </summary>
-        /// <returns></returns>
-        public static WhereHelper<T> Find() => new WhereHelper<T>().StringAppend(_querySql, " WHERE ");
-
-        public static List<T> FindAllEntity()
-        {
-            return StaticExtendMethod.GetEntities<T>(_querySql);
-        }
-        public static DataTable FindAllDataTable()
-        {
-            return DBHelper.GetDataTable(_querySql);
-        }
+        private static readonly string _SelectSql = string.Empty;
+        private static readonly string _InsertSql = string.Empty;
+        private static readonly string _DeleteSql = string.Empty;
+        private static readonly string _UpdateSql = string.Empty;
 
 
         /// <summary>
@@ -77,54 +48,143 @@ namespace HRRobot.Base.ORM
         /// <returns>影响数</returns>
         public static int Insert(T Entity)
         {
-            Entity.ValidateEntity();
+            Entity.Validate();
 
-            List<PropertyInfo> properties = StaticExtendMethod.GetPropertyCache<T>(OperatorStatus.Insert);
+            var props = MemberInfoEx.GetPropertyCache<T>();
 
-            return DBHelper.RunSql(_insertSql,
-                System.Data.CommandType.Text,
-                properties.Select(x => DBHelper.AddDbParameter(x.Name, x.FastGetValue(Entity)))
-                .ToArray());
+            return DBHelper.RunSql(_InsertSql, props.Select(x => DBHelper.AddDbParameter(x.Name, x.FastGetValue(Entity))).ToArray());
         }
 
         /// <summary>
-        /// 根据Id删除
+        /// 根据实体,删除数据,返回执行结果
         /// </summary>
-        /// <param name="Id"></param>
-        /// <returns></returns>
-        public static int DeleteById(int Id) => Delete().FieldEqual("id", Id).RunSql();
-
-
-        /// <summary>
-        /// 根据实体更新数据
-        /// </summary>
-        /// <param name="Entity"></param>
-        /// <returns></returns>
-        public static int UpdateByID(T Entity) => Update(Entity).FieldEqual("id", Entity.Id).RunSql();
-
-        /// <summary>
-        /// 更新
-        /// </summary>
-        /// <param name="entity">实体</param>
-        /// <returns></returns>
-        public static WhereHelper<T> Update(T entity)
+        /// <param name="Entity">实体</param>
+        /// <returns>影响数</returns>
+        public static int Delete(T Entity)
         {
-            entity.ValidateEntity();
-
-            WhereHelper<T> wherehelper = new WhereHelper<T>();
-
-            List<PropertyInfo> properties = StaticExtendMethod.GetPropertyCache<T>(OperatorStatus.Update);
-
-            properties.ForEach(x => wherehelper.ParaAppend(x.Name, x.FastGetValue(entity), false));
-
-            return wherehelper.StringAppend(_updateSql, " WHERE ");
+            return DBHelper.RunSql(_DeleteSql + "Where fGuid =@Uid", new[] { DBHelper.AddDbParameter("Uid", Entity.Uid) });
         }
 
         /// <summary>
-        /// 删除
+        /// 根据ID,删除数据,返回执行结果
         /// </summary>
+        /// <param name="Guid">Guid</param>
+        /// <returns>影响数</returns>
+        public static int DeleteById(string Guid)
+        {
+            return Delete(new T() { Uid = Guid });
+        }
+
+        /// <summary>
+        /// 根据实体,更新数据,返回执行结果
+        /// </summary>
+        /// <param name="Entity">实体</param>
+        /// <returns>影响数</returns>
+        public static int UpdateEx(T Entity)
+        {
+            Entity.Validate();
+
+            var props = MemberInfoEx.GetPropertyCache<T>();
+
+            return DBHelper.RunSql(_UpdateSql + "Where fGuid = @Uid", props.Select(x => DBHelper.AddDbParameter(x.Name, x.FastGetValue(Entity))).ToArray());
+        }
+
+        /// <summary>
+        /// 返回类型实体list
+        /// </summary>
+        /// <typeparam name="T">类型</typeparam>
         /// <returns></returns>
-        public static WhereHelper<T> Delete() => new WhereHelper<T>().StringAppend(_deleteSql, " WHERE ");
+        public static List<T> GetEntities()
+        {
+            using (var reader = DBHelper.GetDataReader(_SelectSql, CommandBehavior.Default, null))
+            {
+                try
+                {
+                    List<T> listEntity = new List<T>();
+
+                    while (reader.Read())
+                    {
+                        listEntity.Add(reader.GetEntity<T>());
+                    }
+                    return listEntity;
+                }
+                catch (Exception)
+                {
+                    reader.Close();
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 返回类型实体
+        /// </summary>
+        /// <param name="Guid">Guid</param>
+        /// <returns>实体</returns>
+        public static T GetEntityById(string Guid)
+        {
+            using (var reader = DBHelper.GetDataReader(_SelectSql + "Where fGuid = @Uid", CommandBehavior.Default, new[] { DBHelper.AddDbParameter("Uid", Guid) }))
+            {
+                try
+                {
+                    T Entity = new T();
+
+                    if (reader.Read())
+                    {
+                        return reader.GetEntity<T>();
+                    }
+                    return null;
+                }
+                catch (Exception)
+                {
+                    reader.Close();
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 根据sql返回DataTable
+        /// </summary>
+        /// <returns>DataTable</returns>
+        public static DataTable GetDataTable()
+        {
+            return DBHelper.GetDataTable(_SelectSql);
+        }
+
+        /// <summary>
+        /// 检查是否存在
+        /// </summary>
+        /// <param name="Entity">实体</param>
+        /// <returns>存在结果</returns>
+        public static bool Exists(T Entity)
+        {
+            return DBHelper.GetScalar(_SelectSql + "Where fGuid=@Uid", CommandType.Text, new[] { DBHelper.AddDbParameter("Uid", Entity.Uid) }) != null;
+        }
+
+        /// <summary>
+        /// 根据Guid,检查是否存在
+        /// </summary>
+        /// <param name="Guid">Guid</param>
+        /// <returns>存在结果</returns>
+        public static bool ExistsById(string Guid)
+        {
+            return Exists(new T() { Uid = Guid });
+        }
+
+        /// <summary>
+        /// 保存数据
+        /// </summary>
+        /// <param name="Entity">实体</param>
+        /// <returns>保存结果</returns>
+        public static bool Save(T Entity)
+        {
+            if (Exists(Entity))
+            {
+                return UpdateEx(Entity) > 0;
+            }
+            return Insert(Entity) > 0;
+        }
 
         /// <summary>
         /// 根据DataTable,方法中自动获取变化数据更新数据库
@@ -147,37 +207,43 @@ namespace HRRobot.Base.ORM
 
             List<string> listSqls = new List<string>();
 
-            List<PropertyInfo> properties = null;
+            List<PropertyInfo> properties;
 
             List<List<DbParameter>> listDbParas = new List<List<DbParameter>>();
 
             foreach (DataRow dr in dtChanges.Rows)
             {
-                dr.ValidateDataRow<T>();
+                dr.Validate<T>();
 
                 switch (dr.RowState)
                 {
                     case DataRowState.Added:
 
-                        listSqls.Add(_insertSql);
+                        listSqls.Add(_InsertSql);
 
-                        properties = StaticExtendMethod.GetPropertyCache<T>(OperatorStatus.Insert);
+                        properties = MemberInfoEx.GetPropertyCache<T>();
+
+                        dr["fCreator"] = Environment.MachineName;
+                        dr["fCreateTime"] = DateTime.Now;
 
                         listDbParas.Add(properties.Select(x => DBHelper.AddDbParameter(x.Name, dr[x.GetCustomName()])).ToList());
 
                         break;
                     case DataRowState.Deleted:
 
-                        listSqls.Add(_deleteSql + " WHERE id = " + dr["id", DataRowVersion.Original]);
+                        listSqls.Add(_DeleteSql + $" WHERE fGuid = '{dr["fGuid", DataRowVersion.Original]}'");
 
                         listDbParas.Add(new List<DbParameter>());
 
                         break;
                     case DataRowState.Modified:
 
-                        listSqls.Add(_updateSql + " WHERE id =" + dr["id"]);
+                        listSqls.Add(_UpdateSql + $" WHERE fGuid ='{dr["fGuid"]}'");
 
-                        properties = StaticExtendMethod.GetPropertyCache<T>(OperatorStatus.Update);
+                        properties = MemberInfoEx.GetPropertyCache<T>();
+
+                        dr["fModifier"] = Environment.MachineName;
+                        dr["fModifyTime"] = DateTime.Now;
 
                         listDbParas.Add(properties.Select(x => DBHelper.AddDbParameter(x.Name, dr[x.GetCustomName()])).ToList());
 
@@ -186,8 +252,44 @@ namespace HRRobot.Base.ORM
                         break;
                 }
             }
-            return DBHelper.RunSql(listSqls, System.Data.CommandType.Text, listDbParas);
+            bool Result = DBHelper.RunSql(listSqls, listDbParas);
+            if (Result)
+            {
+                dt.AcceptChanges();
+            }
+
+            return Result;
 
         }
+
+        /// <summary>
+        /// 查询
+        /// </summary>
+        /// <returns></returns>
+        public static WhereHelper<T> Find() => new WhereHelper<T>().StringAppend(_SelectSql, " WHERE ");
+
+        /// <summary>
+        /// 更新
+        /// </summary>
+        /// <param name="entity">实体</param>
+        /// <returns></returns>
+        public static WhereHelper<T> Update(T entity)
+        {
+            entity.Validate();
+
+            WhereHelper<T> wherehelper = new WhereHelper<T>();
+
+            List<PropertyInfo> properties = MemberInfoEx.GetPropertyCache<T>();
+
+            properties.ForEach(x => wherehelper.ParaAppend(x.Name, x.FastGetValue(entity), false));
+
+            return wherehelper.StringAppend(_UpdateSql, " WHERE ");
+        }
+
+        /// <summary>
+        /// 删除
+        /// </summary>
+        /// <returns></returns>
+        public static WhereHelper<T> Delete() => new WhereHelper<T>().StringAppend(_DeleteSql, " WHERE ");
     }
 }

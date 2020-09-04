@@ -1,24 +1,17 @@
-﻿/******************************************
- *Function        CreatTime         Creator
- *自定义特性基类     20200413          Ligy
- *
- *****************************************/
+﻿using System;
 
-using System;
 
-namespace HRRobot.Base.ORM
+namespace DbProviderFactory.ORM
 {
     /// <summary>
-    /// 特性基类
+    /// 自定义特性基类
     /// </summary>
     public class CustomBaseAttribute : Attribute
     {
-        private string _fieldName = string.Empty;
-
         /// <summary>
         /// 数据库的字段名称
         /// </summary>
-        public string FieldName { get => _fieldName; }
+        public string FieldName { get; } = string.Empty;
 
         /// <summary>
         /// 错误提醒
@@ -35,9 +28,28 @@ namespace HRRobot.Base.ORM
         /// </summary>
         public bool Empty { get; set; } = false;
 
+        /// <summary>
+        /// Ctor
+        /// </summary>
+        /// <param name="fieldName">数据库字段名称</param>
         public CustomBaseAttribute(string fieldName)
         {
-            _fieldName = fieldName;
+            FieldName = fieldName;
+        }
+
+        public override bool Equals(object obj)
+        {
+            if (!(obj is CustomBaseAttribute attr) || !this.GetType().Name.Equals(attr.GetType().Name))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public override int GetHashCode()
+        {
+            return base.GetHashCode();
         }
     }
 }

@@ -1,17 +1,15 @@
-﻿/******************************************
- *Function        CreatTime         Creator
- *表特性            20200413          Ligy
- *
- *****************************************/
+﻿using System;
 
-using System;
-
-namespace HRRobot.Base.ORM
+namespace DbProviderFactory.ORM
 {
-    [AttributeUsage(AttributeTargets.Class)]
+    [AttributeUsage(AttributeTargets.Class, AllowMultiple = false)]
     public class TableAttribute : CustomBaseAttribute
     {
-        public TableAttribute(string fieldName) : base(fieldName)
+        /// <summary>
+        /// Ctor
+        /// </summary>
+        /// <param name="fieldName"></param>
+        public TableAttribute(string TableName) : base(TableName)
         {
         }
     }

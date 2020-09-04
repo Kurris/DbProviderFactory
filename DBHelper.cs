@@ -2,31 +2,34 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Data.SQLite;
 using System.Linq;
+using System.Text;
 
-/*修改时间                               修改人                                 修改内容
- *20200413                              ligy                                  create 兼容多个数据库类型帮助类
- *20200429                              ligy                                  增加获取datareader方法,可自定义获取的行为
- *20200429                              wjm                                   增加执行多条数据库语句方法
- ***************************************************************************************************************/
 
-namespace HRRobot.Base.Ado
+namespace DbProviderFactory.Ado
 {
     public sealed class DBHelper
     {
-        /// <summary>
-        /// 数据库连接字符串,取配置文件
-        /// </summary>
-        private static readonly string _msConnectionString = MappingConfig.GetValueByKey("SqlConnection", true).ToString();
+        private static System.Data.Common.DbProviderFactory _mfactory = null;
 
-        //ConfigurationManager.ConnectionStrings["SQLCONN"].ConnectionString;
+        private static string _msConnection = string.Empty;
 
         /// <summary>
         /// 数据库提供者工厂实例,取配置文件
         /// </summary>
-        private static readonly DbProviderFactory providerFactory = DbProviderFactories.GetFactory(MappingConfig.GetValueByKey("ProviderName", true).ToString());
+        private static System.Data.Common.DbProviderFactory GetProviderFactory()
+        {
+            if (_mfactory == null)
+            {
+                DbConnection dbConnection = null;
 
-        //DbProviderFactories.GetFactory(ConfigurationManager.ConnectionStrings["SQLCONN"].ProviderName);
+                dbConnection = new SQLiteConnection(_msConnection);
+
+                _mfactory = DbProviderFactories.GetFactory(dbConnection);
+            }
+            return _mfactory;
+        }
 
         /// <summary>
         /// 构造函数
@@ -36,6 +39,17 @@ namespace HRRobot.Base.Ado
         }
 
         #region CreateDbCommand
+
+        /// <summary>
+        /// 设置新的连接
+        /// </summary>
+        /// <param name="UsingSqlType">数据库使用类型</param>
+        /// <param name="ConnectionString">连接字符串</param>
+        public static void SetNewConnection(string ConnectionString)
+        {
+            _msConnection = ConnectionString;
+            _mfactory = null;
+        }
 
         /// <summary>
         /// 创建DbCommand对象,打开连接,打开事务
@@ -48,9 +62,9 @@ namespace HRRobot.Base.Ado
         {
             try
             {
-                DbConnection dbConnection = providerFactory.CreateConnection();
-                dbConnection.ConnectionString = _msConnectionString;
-                DbCommand command = providerFactory.CreateCommand();
+                DbConnection dbConnection = GetProviderFactory().CreateConnection();
+                dbConnection.ConnectionString = _msConnection;
+                DbCommand command = GetProviderFactory().CreateCommand();
 
                 command.Connection = dbConnection;
                 command.CommandText = sql;
@@ -83,9 +97,9 @@ namespace HRRobot.Base.Ado
         {
             try
             {
-                DbConnection dbConnection = providerFactory.CreateConnection();
-                dbConnection.ConnectionString = _msConnectionString;
-                DbCommand command = providerFactory.CreateCommand();
+                DbConnection dbConnection = GetProviderFactory().CreateConnection();
+                dbConnection.ConnectionString = _msConnection;
+                DbCommand command = GetProviderFactory().CreateCommand();
 
                 command.Connection = dbConnection;
                 command.CommandType = commandType;
@@ -114,7 +128,18 @@ namespace HRRobot.Base.Ado
         /// <returns>受影响的行数</returns>
         public static int RunSql(string sql)
         {
-            return RunSql(sql, CommandType.Text, null);
+            return RunSql(sql, null);
+        }
+
+        /// <summary>
+        /// 执行查询语句
+        /// </summary>
+        /// <param name="sql">执行语句</param>
+        /// <param name="parameters">参数数组</param>
+        /// <returns>受影响的行数</returns>
+        public static int RunSql(string sql, DbParameter[] parameters)
+        {
+            return RunSql(sql, CommandType.Text, parameters);
         }
 
         /// <summary>
@@ -152,6 +177,27 @@ namespace HRRobot.Base.Ado
         /// 同一个事务中执行Sql
         /// </summary>
         /// <param name="sqls">sql list</param>
+        /// <returns></returns>
+        public static bool RunSql(List<string> sqls)
+        {
+            return RunSql(sqls, CommandType.Text, null);
+        }
+
+        /// <summary>
+        /// 同一个事务中执行Sql
+        /// </summary>
+        /// <param name="sqls">sql list</param>
+        /// <param name="parameters">参数</param>
+        /// <returns></returns>
+        public static bool RunSql(List<string> sqls, List<List<DbParameter>> parameters)
+        {
+            return RunSql(sqls, CommandType.Text, parameters);
+        }
+
+        /// <summary>
+        /// 同一个事务中执行Sql
+        /// </summary>
+        /// <param name="sqls">sql list</param>
         /// <param name="commandType">执行类型</param>
         /// <param name="parameters">paras llist</param>
         /// <returns></returns>
@@ -167,16 +213,18 @@ namespace HRRobot.Base.Ado
 
                         command.CommandText = sql;
 
-                        List<DbParameter> paras = parameters[i];
-
-                        if (paras != null && paras.Count > 0)
+                        if (parameters != null && parameters.Count > 0)
                         {
-                            command.Parameters.AddRange(paras.ToArray());
+                            List<DbParameter> paras = parameters[i];
+                            if (paras != null && paras.Count > 0)
+                            {
+                                command.Parameters.AddRange(paras.ToArray());
+                            }
                         }
                         int iResult = command.ExecuteNonQuery();
                         if (iResult < 0)
                         {
-                            throw new Exception("effected rows < 0");
+                            throw new Exception("执行结果影响数少于零");
                         }
                         command.Parameters.Clear();
                     }
@@ -225,13 +273,72 @@ namespace HRRobot.Base.Ado
             try
             {
                 DbDataReader reader = command.ExecuteReader(CommandBehavior.SingleRow);
-
+                command.Transaction.Commit();
                 return reader;
+
             }
             catch (Exception)
             {
+                command.Transaction.Rollback();
                 command.Dispose();
                 throw;
+            }
+        }
+
+
+        /// <summary>
+        /// 数据保存(通过Datable的TableName和PrimaryKey)
+        /// </summary>
+        /// <param name="Tables">多个内存表</param>
+        /// <param name="Cover">是否覆盖</param>
+        /// <returns>执行结果</returns>
+        public static bool Save(IEnumerable<DataTable> Tables, bool Cover)
+        {
+            string sTableName = string.Empty;
+            string sSql = string.Empty;
+
+            StringBuilder sb = new StringBuilder();
+
+            foreach (DataTable Table in Tables)
+            {
+                if (Table.Rows.Count == 0) continue;
+
+                sTableName = Table.TableName;
+
+                //取列名
+                List<string> listCols = new List<string>(Table.Columns.Count);
+
+                foreach (DataColumn Col in Table.Columns)
+                {
+                    listCols.Add(Col.ColumnName);
+                }
+                //取主键
+                var Keys = Table.PrimaryKey;
+
+                foreach (DataRow dr in Table.Rows)
+                {
+                    if (Cover)
+                    {
+                        sSql = $@"delete from {sTableName} 
+                                  where {GetWhereString(dr, Keys)};";
+
+                        sb.AppendLine(sSql);
+                    }
+
+                    sSql = $@"insert into {sTableName}({string.Join(",", listCols)})
+                              select  {string.Join(",", dr.ItemArray.Select(x => $"'{x}'"))}
+                              where not exists( select 1 from {sTableName} where {GetWhereString(dr, Keys)});";
+
+                    sb.AppendLine(sSql);
+                }
+            }
+
+            return RunSql(sb.ToString()) >= 0;
+
+            //本地函数, 获取where拼接条件
+            string GetWhereString(DataRow Row, DataColumn[] Keys)
+            {
+                return string.Join(" and ", Keys.Select(x => $"{x.ColumnName}='{Row[x.ColumnName]}'"));
             }
         }
 
@@ -249,11 +356,12 @@ namespace HRRobot.Base.Ado
             try
             {
                 DbDataReader reader = command.ExecuteReader(commandBehavior);
-
+                command.Transaction.Commit();
                 return reader;
             }
             catch (Exception)
             {
+                command.Transaction.Rollback();
                 command.Dispose();
                 throw;
             }
@@ -284,7 +392,7 @@ namespace HRRobot.Base.Ado
         {
             using (DbCommand command = CreateDbCommand(sql, commandType, parameters))
             {
-                using (DbDataAdapter adapter = providerFactory.CreateDataAdapter())
+                using (DbDataAdapter adapter = GetProviderFactory().CreateDataAdapter())
                 {
                     try
                     {
@@ -407,7 +515,7 @@ namespace HRRobot.Base.Ado
         /// <returns>DbParameter对象</returns>
         public static DbParameter AddDbParameter(string name, object value, ParameterDirection parameterDirection = ParameterDirection.Input)
         {
-            DbParameter parameter = providerFactory.CreateParameter();
+            DbParameter parameter = GetProviderFactory().CreateParameter();
 
             parameter.Direction = parameterDirection;
             if (!name.Contains("@"))

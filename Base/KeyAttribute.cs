@@ -1,16 +1,13 @@
-﻿/******************************************
- *Function        CreatTime         Creator
- *主键特性          20200413          Ligy
- *
- *****************************************/
+﻿using System;
 
-using System;
-
-namespace HRRobot.Base.ORM
+namespace DbProviderFactory.ORM
 {
-    [AttributeUsage(AttributeTargets.Property)]
+    [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
     public class KeyAttribute : CustomBaseAttribute
     {
+        /// <summary>
+        /// Ctor
+        /// </summary>
         public KeyAttribute() : base(string.Empty)
         {
         }
